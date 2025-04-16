@@ -1,0 +1,3 @@
+[submodule "update-bookworm/subscripts"]
+	path = OLD/update-bookworm/subscripts
+	url = git@github.com:CrbrDocker/subscripts.git

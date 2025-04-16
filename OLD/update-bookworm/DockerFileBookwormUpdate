@@ -1,0 +1,5 @@
+FROM crbrdocker/debian:bookworm
+
+COPY --chmod=755 ./update-bookworm.sh /update-bookworm.sh
+RUN /update-bookworm.sh
+
