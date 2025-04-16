@@ -8,13 +8,13 @@ for ARCH in amd64 arm64 ; do
   #debootstrap --arch ${ARCH} --variant=minbase --components=main,contrib,non-free,non-free-firmware --no-check-gpg --no-check-certificate --include=wget,vim,sysvinit-core,rsync,subversion,git,locales,openssh-client,ca-certificates,debian-keyring,dialog,ncurses-bin,curl,less,procps --exclude='systemd*','dbus*',apparmor,nano bookworm ${ARCH}_dir
 debootstrap --arch ${ARCH} --variant=minbase --components=main,contrib,non-free,non-free-firmware --no-check-gpg --no-check-certificate --include=wget,sysvinit-core,rsync,subversion,git,locales,openssh-client,ca-certificates,debian-keyring,dialog,ncurses-bin,curl,procps --exclude='systemd*','dbus*',apparmor,nano bookworm ${ARCH}_dir
 
-
-  # Si jamais on doit utiliser vi dans le container...
-  cat > ${ARCH}_dir/etc/vim/vimrc.local <<EOF
-let g:skip_defaults_vim = 1
-set mouse=
-set bg=dark
-EOF
+#VIM removed.
+#  # Si jamais on doit utiliser vi dans le container...
+#  cat > ${ARCH}_dir/etc/vim/vimrc.local <<EOF
+#let g:skip_defaults_vim = 1
+#set mouse=
+#set bg=dark
+#EOF
 
 
   # Les locales
