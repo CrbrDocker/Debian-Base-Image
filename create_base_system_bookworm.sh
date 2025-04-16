@@ -157,3 +157,5 @@ docker manifest push crbrdocker/debian:bookworm
 # Cleanup
 rm -rf *_dir
 docker system prune -a -f
+rm -rf ~/.docker/manifests/docker.io_crbrdocker_debian-bookworm >/dev/null 2>&1
+
