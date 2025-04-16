@@ -1,6 +1,7 @@
 
 #Creation root system
 
+#for ARCH in amd64 arm64 armel; do
 for ARCH in amd64 arm64 ; do
 
   # creation du systeme de base
@@ -77,7 +78,7 @@ EOF
 
   echo 'APT::Get::AllowUnauthenticated "true" ;' > ${ARCH}_dir/etc/apt/apt.conf.d/80cleancrap
 
-  # DNS - Pas sûr si ca utilise ca ou le DNS host de toute facon
+  # DNS - Pas sÃ»r si ca utilise ca ou le DNS host de toute facon
   cat > ${ARCH}_dir/etc/resolv.conf <<EOF
 nameserver 8.8.8.8
 nameserver 8.8.4.4
@@ -99,7 +100,7 @@ apt -y update
 apt-get -y dist-upgrade
 
 # Un peu de cleaning au besoin
-# Note : en principe, pas besoin d'init du tout (pas plus que de kernel & co), mais avoir sysvinit light au cas ou, ca évite qu'une dependance installe systemd & co
+# Note : en principe, pas besoin d'init du tout (pas plus que de kernel & co), mais avoir sysvinit light au cas ou, ca Ã©vite qu'une dependance installe systemd & co
 apt-get -y install sysvinit-core
 apt-get -y remove --purge 'systemd*' 'dbus*' 'apparmor*'
 apt-get -y autoremove --purge
@@ -142,11 +143,15 @@ done
 
 
 # Upload sur le serveur & co
-docker tag MYIMG/debian:bookworm-amd64 crbrdocker/crbr-private/debian:bookworm-amd64
-docker tag MYIMG/debian:bookworm-arm64 crbrdocker/crbr-private/debian:bookworm-arm64
-docker push -a crbrdocker/crbr-private/debian
+docker tag MYIMG/debian:bookworm-amd64 crbrdocker/debian:bookworm-amd64
+docker tag MYIMG/debian:bookworm-arm64 crbrdocker/debian:bookworm-arm64
+#docker tag MYIMG/debian:bookworm-armel crbrdocker/debian:bookworm-armel
+docker push -a crbrdocker/debian
 
-docker manifest create crbrdocker/crbr-private/debian:bookworm --amend crbrdocker/crbr-private/debian:bookworm-amd64 --amend crbrdocker/crbr-private/debian:bookworm-arm64
+#docker manifest create crbrdocker/debian:bookworm --amend crbrdocker/debian:bookworm-amd64 --amend crbrdocker/debian:bookworm-arm64 --amend crbrdocker/debian:bookworm-armel
+docker manifest create crbrdocker/debian:bookworm --amend crbrdocker/debian:bookworm-amd64 --amend crbrdocker/debian:bookworm-arm64
+
+docker manifest push crbrdocker/debian:bookworm
 
 # Cleanup
 rm -rf *_dir
