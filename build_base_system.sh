@@ -110,6 +110,27 @@ APT::Install-Recommends "false";
 APT::Install-Suggests   "false";
 EOF
 
+# Debian-official (debuerreotype) drop-ins that keep *downstream* installs lean/fast.
+cat > "$ROOTFS/etc/apt/apt.conf.d/docker-no-languages" <<'EOF'
+# Don't download translation files.
+Acquire::Languages "none";
+EOF
+cat > "$ROOTFS/etc/apt/apt.conf.d/docker-gzip-indexes" <<'EOF'
+# Keep apt lists gzipped on disk.
+Acquire::GzipIndexes "true";
+EOF
+cat > "$ROOTFS/etc/apt/apt.conf.d/docker-autoremove-suggests" <<'EOF'
+# Let autoremove drop packages kept alive only by Suggests.
+Apt::AutoRemove::SuggestsImportant "false";
+EOF
+cat > "$ROOTFS/etc/apt/apt.conf.d/docker-clean" <<'EOF'
+# Drop the .deb archive caches after each install/update; don't keep pkgcaches.
+DPkg::Post-Invoke { "rm -f /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*.deb /var/cache/apt/*.bin || true"; };
+APT::Update::Post-Invoke { "rm -f /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*.deb /var/cache/apt/*.bin || true"; };
+Dir::Cache::pkgcache "";
+Dir::Cache::srcpkgcache "";
+EOF
+
 # The real guard against a dependency dragging the init/dbus stack back in.
 cat > "$ROOTFS/etc/apt/preferences.d/no-systemd" <<'EOF'
 Package: systemd systemd-sysv dbus apparmor
@@ -128,6 +149,11 @@ path-exclude=/usr/share/lintian/*
 path-exclude=/usr/share/bug/*
 path-exclude=/usr/share/doc-base/*
 path-exclude=/usr/share/locale/*
+EOF
+# Skip fsync during dpkg — safe for ephemeral image builds, and faster (also
+# speeds up our own chroot dist-upgrade below).
+cat > "$ROOTFS/etc/dpkg/dpkg.cfg.d/docker-apt-speedup" <<'EOF'
+force-unsafe-io
 EOF
 # ...and drop what debootstrap already laid down (our rules only apply to
 # packages configured after this point). Copyright files are kept for
