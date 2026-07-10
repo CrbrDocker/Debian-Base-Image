@@ -3,6 +3,8 @@ name: build-base-image
 # Weekly rebuild of the Debian base images, plus manual runs. The gate keeps a
 # scheduled run from rebuilding/pushing when nothing changed.
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: "17 4 * * 2"   # Tuesday 04:17 UTC (off the on-the-hour crowd)
   workflow_dispatch:
