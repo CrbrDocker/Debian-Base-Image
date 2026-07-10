@@ -119,21 +119,34 @@ jobs:
         with:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ env.DOCKERHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
       - name: Install debootstrap
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends debootstrap debian-archive-keyring
-      - name: Build and push per-arch image
+      - name: Build rootfs tarball
         env:
-          IMAGE: ghcr.io/${{ needs.resolve.outputs.owner }}/debian:${{ matrix.suite.codename }}-${{ matrix.arch.name }}
+          TARBALL: rootfs.tar
+        run: sudo -E ./build_base_system.sh "${{ matrix.suite.codename }}" "${{ matrix.arch.name }}"
+      - name: Build & push per-arch image (OCI + attestations)
+        env:
+          CODE: ${{ matrix.suite.codename }}
+          ARCH_NAME: ${{ matrix.arch.name }}
           VCS_REF: ${{ github.sha }}
         run: |
           set -euo pipefail
-          export BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          sudo -E ./build_base_system.sh "${{ matrix.suite.codename }}" "${{ matrix.arch.name }}"
-          docker push "$IMAGE"
-          if [ -n "$DOCKERHUB_USERNAME" ]; then
-            docker tag "$IMAGE" "${DOCKERHUB_IMAGE}:${{ matrix.suite.codename }}-${{ matrix.arch.name }}"
-            docker push "${DOCKERHUB_IMAGE}:${{ matrix.suite.codename }}-${{ matrix.arch.name }}"
-          fi
+          sudo chown "$(id -u):$(id -g)" rootfs.tar
+          mkdir -p ctx && mv rootfs.tar ctx/rootfs.tar
+          tags=(-t "${GHCR_IMAGE}:${CODE}-${ARCH_NAME}")
+          [ -n "$DOCKERHUB_USERNAME" ] && tags+=(-t "${DOCKERHUB_IMAGE}:${CODE}-${ARCH_NAME}")
+          docker buildx build ctx -f Dockerfile \
+            --platform "linux/${ARCH_NAME}" \
+            "${tags[@]}" \
+            --output type=image,oci-mediatypes=true,push=true \
+            --attest type=provenance,mode=max \
+            --attest type=sbom \
+            --build-arg "IMAGE_VERSION=${CODE}" \
+            --build-arg "IMAGE_REVISION=${VCS_REF}" \
+            --build-arg "IMAGE_CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --build-arg "IMAGE_SOURCE=${SOURCE_URL}"
 
   # --------------------------------------------------------------------------
   # Merge the per-arch tags into the codename tag + aliases, per registry.

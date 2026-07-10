@@ -2,8 +2,8 @@
 #
 # build_base_system.sh
 #
-# Build a minimal, systemd-free Debian base rootfs from scratch and, optionally,
-# import it as a single-layer Docker image.
+# Build a minimal, systemd-free Debian base rootfs from scratch, package it as a
+# tarball, and (optionally) build a single-layer image from it with buildx.
 #
 # Linux only: needs debootstrap + chroot + root. The build is NATIVE (ARCH
 # defaults to the host arch), so no qemu is involved when run on a matching
@@ -17,7 +17,8 @@
 #   ROOTFS      target rootfs directory       [default: ./rootfs-<suite>-<arch>]
 #   MIRROR      Debian mirror                 [default: http://deb.debian.org/debian]
 #   SECMIRROR   Debian security mirror        [default: http://deb.debian.org/debian-security]
-#   IMAGE       if set, `docker import` the rootfs to this image reference
+#   TARBALL     rootfs tarball output path        [default: <rootfs>.tar]
+#   IMAGE       if set, build a local single-layer image at this ref (buildx --load)
 #   VCS_REF     git sha stamped as an OCI label   [default: git HEAD, else "unknown"]
 #   BUILD_DATE  RFC3339 date stamped as a label   [default: now, UTC]
 #   SOURCE_URL  repo URL for the OCI source label [default: derived from git remote]
@@ -184,19 +185,27 @@ cleanup
 # Don't bake the build host's DNS into the image; the runtime provides it.
 : > "$ROOTFS/etc/resolv.conf"
 
-# --- 6. Optional: import as a single-layer Docker image -------------------
+# --- 6. Package the rootfs ------------------------------------------------
+TARBALL="${TARBALL:-${ROOTFS}.tar}"
+echo ">>> Writing rootfs tarball: ${TARBALL}"
+tar -C "$ROOTFS" -cpf "$TARBALL" .
+
+# Optional local image: single-layer buildx build loaded into the local daemon.
+# CI leaves IMAGE unset and builds+pushes from the tarball itself (OCI media types
+# + provenance/SBOM attestations); this path is just for local convenience.
 if [ -n "${IMAGE:-}" ]; then
-  echo ">>> Importing image ${IMAGE} (linux/${ARCH})"
-  changes=(
-    --change 'CMD ["/bin/bash"]'
-    --change 'LABEL org.opencontainers.image.title=debian'
-    --change 'LABEL org.opencontainers.image.description="Minimal Debian base image"'
-    --change "LABEL org.opencontainers.image.version=${SUITE}"
-    --change "LABEL org.opencontainers.image.revision=${VCS_REF}"
-    --change "LABEL org.opencontainers.image.created=${BUILD_DATE}"
-  )
-  [ -n "${SOURCE_URL}" ] && changes+=(--change "LABEL org.opencontainers.image.source=\"${SOURCE_URL}\"")
-  tar -C "$ROOTFS" -cpf - . | docker import --platform "linux/${ARCH}" "${changes[@]}" - "$IMAGE"
+  echo ">>> Building local image ${IMAGE} (linux/${ARCH})"
+  _ctx="$(mktemp -d)"
+  cp "$TARBALL" "$_ctx/rootfs.tar"
+  docker buildx build "$_ctx" \
+    -f "$(dirname "$0")/Dockerfile" \
+    --platform "linux/${ARCH}" \
+    --build-arg "IMAGE_VERSION=${SUITE}" \
+    --build-arg "IMAGE_REVISION=${VCS_REF}" \
+    --build-arg "IMAGE_CREATED=${BUILD_DATE}" \
+    --build-arg "IMAGE_SOURCE=${SOURCE_URL}" \
+    -t "$IMAGE" --load
+  rm -rf "$_ctx"
 fi
 
 echo ">>> Done. Rootfs size:"
