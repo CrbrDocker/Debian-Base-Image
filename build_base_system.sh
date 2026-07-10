@@ -20,6 +20,7 @@
 #   IMAGE       if set, `docker import` the rootfs to this image reference
 #   VCS_REF     git sha stamped as an OCI label   [default: git HEAD, else "unknown"]
 #   BUILD_DATE  RFC3339 date stamped as a label   [default: now, UTC]
+#   SOURCE_URL  repo URL for the OCI source label [default: derived from git remote]
 
 set -euo pipefail
 
@@ -35,6 +36,16 @@ SECMIRROR="${SECMIRROR:-http://deb.debian.org/debian-security}"
 ROOTFS="${ROOTFS:-./rootfs-${SUITE}-${ARCH}}"
 VCS_REF="${VCS_REF:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
 BUILD_DATE="${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+# Source URL for the OCI label: use $SOURCE_URL, else derive from the git remote.
+if [ -z "${SOURCE_URL:-}" ]; then
+  _r="$(git remote get-url origin 2>/dev/null || true)"; _r="${_r%.git}"
+  case "$_r" in
+    git@*:*)            _r="${_r#git@}"; SOURCE_URL="https://${_r%%:*}/${_r#*:}" ;;
+    ssh://*)            _r="${_r#ssh://}"; _r="${_r#*@}"; SOURCE_URL="https://${_r}" ;;
+    http://*|https://*) SOURCE_URL="$_r" ;;
+    *)                  SOURCE_URL="" ;;
+  esac
+fi
 
 # Packages kept in every image. Anything tool-specific belongs in a derived
 # `FROM` image, not here.
@@ -176,14 +187,16 @@ cleanup
 # --- 6. Optional: import as a single-layer Docker image -------------------
 if [ -n "${IMAGE:-}" ]; then
   echo ">>> Importing image ${IMAGE} (linux/${ARCH})"
-  tar -C "$ROOTFS" -cpf - . | docker import \
-    --platform "linux/${ARCH}" \
-    --change 'CMD ["/bin/bash"]' \
-    --change 'LABEL org.opencontainers.image.title=debian' \
-    --change "LABEL org.opencontainers.image.version=${SUITE}" \
-    --change "LABEL org.opencontainers.image.revision=${VCS_REF}" \
-    --change "LABEL org.opencontainers.image.created=${BUILD_DATE}" \
-    - "$IMAGE"
+  changes=(
+    --change 'CMD ["/bin/bash"]'
+    --change 'LABEL org.opencontainers.image.title=debian'
+    --change 'LABEL org.opencontainers.image.description="Minimal Debian base image"'
+    --change "LABEL org.opencontainers.image.version=${SUITE}"
+    --change "LABEL org.opencontainers.image.revision=${VCS_REF}"
+    --change "LABEL org.opencontainers.image.created=${BUILD_DATE}"
+  )
+  [ -n "${SOURCE_URL}" ] && changes+=(--change "LABEL org.opencontainers.image.source=\"${SOURCE_URL}\"")
+  tar -C "$ROOTFS" -cpf - . | docker import --platform "linux/${ARCH}" "${changes[@]}" - "$IMAGE"
 fi
 
 echo ">>> Done. Rootfs size:"

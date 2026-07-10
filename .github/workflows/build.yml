@@ -101,6 +101,7 @@ jobs:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
       DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_NAMESPACE || secrets.DOCKERHUB_USERNAME }}/debian
+      SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3
@@ -146,6 +147,7 @@ jobs:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
       DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_NAMESPACE || secrets.DOCKERHUB_USERNAME }}/debian
+      SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
     steps:
       - uses: docker/login-action@v3
         with:
@@ -167,7 +169,10 @@ jobs:
           push_manifest() {  # $1 = image repo
             local repo="$1"; local args=()
             for t in $TAGS; do args+=(-t "${repo}:${t}"); done
-            docker buildx imagetools create "${args[@]}" \
+            docker buildx imagetools create \
+              --annotation "index:org.opencontainers.image.description=Minimal Debian base image (amd64/arm64)" \
+              --annotation "index:org.opencontainers.image.source=${SOURCE_URL}" \
+              "${args[@]}" \
               "${repo}:${CODE}-amd64" "${repo}:${CODE}-arm64"
           }
           push_manifest "$GHCR_IMAGE"
