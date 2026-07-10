@@ -13,6 +13,10 @@ on:
         description: "Suite/codename to build (blank = current stable + oldstable)"
         required: false
         default: ""
+      force:
+        description: "Build even if the gate sees no change"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -72,9 +76,15 @@ jobs:
       - id: g
         run: |
           set -euo pipefail
+          FORCE="${{ github.event.inputs.force }}"
           out="[]"
           for row in $(echo '${{ needs.resolve.outputs.matrix }}' | jq -c '.[]'); do
             code=$(echo "$row" | jq -r '.codename')
+            if [ "$FORCE" = "true" ]; then
+              echo "forced build (manual dispatch): ${code}"
+              out=$(echo "$out" | jq -c ". + [$row]")
+              continue
+            fi
             echo "::group::gate ${code}"
             res=$(IMAGE="${GHCR_IMAGE}:${code}" VCS_REF="${{ github.sha }}" ./need_rebuild.sh || true)
             echo "$res"
