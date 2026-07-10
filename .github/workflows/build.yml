@@ -18,6 +18,10 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # --------------------------------------------------------------------------
   # Resolve which suites to build. Default = stable + oldstable, read live from
@@ -59,7 +63,7 @@ jobs:
     env:
       GHCR_IMAGE: ghcr.io/${{ needs.resolve.outputs.owner }}/debian
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -103,7 +107,7 @@ jobs:
       DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_NAMESPACE || secrets.DOCKERHUB_USERNAME }}/debian
       SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -179,3 +183,23 @@ jobs:
           if [ -n "$DOCKERHUB_USERNAME" ]; then
             push_manifest "$DOCKERHUB_IMAGE"
           fi
+
+  # --------------------------------------------------------------------------
+  # Prune untagged GHCR versions left behind by overwritten tags. Multi-arch
+  # aware: child manifests of a live tagged image are preserved. (Docker Hub is
+  # tag-centric and self-GCs, so no equivalent step is needed there.)
+  # --------------------------------------------------------------------------
+  cleanup:
+    needs: [resolve, gate, manifest]
+    if: needs.gate.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      - name: Prune untagged GHCR versions
+        uses: dataaxiom/ghcr-cleanup-action@v1.2.2
+        with:
+          owner: ${{ needs.resolve.outputs.owner }}
+          packages: debian
+          delete-untagged: true
+          token: ${{ secrets.GITHUB_TOKEN }}
