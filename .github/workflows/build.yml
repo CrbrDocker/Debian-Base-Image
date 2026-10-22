@@ -228,6 +228,117 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # --------------------------------------------------------------------------
+  # Regenerate the Docker Hub overview: a short intro linking to the GitHub
+  # README, a summary row per published image, and the exact version of every
+  # installed package, read from each image's SBOM attestation (per arch when
+  # amd64 and arm64 differ). Tags are read live from Docker Hub and grouped by
+  # digest, so aliases share one section. Runs on every run, so the page always
+  # matches what is live — even when nothing was rebuilt.
+  # --------------------------------------------------------------------------
+  describe:
+    needs: [resolve, manifest]
+    if: always() && needs.resolve.result == 'success'
+    runs-on: ubuntu-24.04
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_NAMESPACE || secrets.DOCKERHUB_USERNAME }}/debian
+      SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+      KEY_PACKAGES: "libc6 openssl apt"   # packages given their own summary column
+    steps:
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+      - name: Generate overview
+        if: env.DOCKERHUB_USERNAME != ''
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/hub-overview.md"
+          tables="${RUNNER_TEMP}/hub-tables.md"
+          {
+            echo "# debian"
+            echo
+            echo "Minimal, **systemd-free** Debian base images built from scratch (\`debootstrap --variant=minbase\`),"
+            echo "multi-arch (\`amd64\` + \`arm64\`), for the current stable and oldstable releases. Rebuilt weekly,"
+            echo "but only when there is something new to ship (a config change or pending package updates)."
+            echo
+            echo "**Documentation**: ${SOURCE_URL}#readme"
+            echo
+            echo "## Summary"
+            echo
+            printf '| Tags | Debian |'; for k in $KEY_PACKAGES; do printf ' %s |' "$k"; done; echo ' Built | Packages | Arches |'
+            printf '| --- | --- |'; for k in $KEY_PACKAGES; do printf ' --- |'; done; echo ' --- | --- | --- |'
+          } > "$out"
+          {
+            echo
+            echo "## Installed packages"
+            echo
+            echo "Generated $(date -u +%Y-%m-%d) from each image's SBOM attestation. Versions that differ"
+            echo "between \`amd64\` and \`arm64\` are shown per arch."
+          } > "$tables"
+          # Shared jq helpers: Debian packages per arch (name -> version), arch
+          # comparison ignoring binNMU suffixes (+bN), upstream version (epoch
+          # and Debian revision stripped).
+          defs='
+            def pk(p): [ .[p].SPDX.packages[]?
+                         | select(any(.externalRefs[]?; .referenceLocator | startswith("pkg:deb/")))
+                         | {(.name): (.versionInfo // "")} ] | add // {};
+            def same(a; b): ((a // "") | sub("\\+b[0-9]+$"; "")) == ((b // "") | sub("\\+b[0-9]+$"; ""));
+            def up(x): (x // "?") | sub("^[0-9]+:"; "") | sub("-[^-]*$"; "");
+            def distro(p): [ .[p].SPDX.packages[]?.externalRefs[]?.referenceLocator
+                             | capture("distro=debian-(?<v>[0-9.]+)").v ] | first // "?";
+            pk("linux/amd64") as $a | pk("linux/arm64") as $b'
+          # Published tags (per-arch -amd64/-arm64 helpers dropped), grouped by
+          # digest; codename before alias names, the group holding :latest first.
+          groups=$(curl -sfL "https://hub.docker.com/v2/repositories/${DOCKERHUB_IMAGE}/tags?page_size=100" \
+            | jq -c '[.results[] | select(.name | test("-(amd64|arm64)$") | not)]
+              | group_by(.digest)
+              | map({digest: .[0].digest,
+                     tags: (map(.name) | sort_by(if . == "latest" then 2 elif test("^(old)?stable$|^testing$") then 1 else 0 end, .))})
+              | sort_by(if (.tags | index("latest")) then 0 else 1 end, .tags[0]) | .[]')
+          while read -r g; do
+            [ -n "$g" ] || continue
+            ref="${DOCKERHUB_IMAGE}@$(jq -r .digest <<<"$g")"
+            title=$(jq -r '.tags | map("`:\(.)`") | join(" · ")' <<<"$g")
+            sbom=$(docker buildx imagetools inspect "$ref" --format '{{ json .SBOM }}')
+            built=$(docker buildx imagetools inspect "$ref" --format '{{ json .Image }}' \
+              | jq -r '[.[] | .config.Labels["org.opencontainers.image.created"] // empty] | max // "?" | .[0:10]')
+            jq -r --arg title "$title" --arg built "$built" --arg keys "$KEY_PACKAGES" "$defs"'
+              | ([ $a + $b | keys[] | select(same($a[.]; $b[.]) | not) ] | length) as $n
+              | "| \($title) | \(distro("linux/amd64")) | "
+                + ([ $keys | splits(" +") | select(length > 0) as $k
+                     | if same($a[$k]; $b[$k]) then up($a[$k] // $b[$k])
+                       else "\(up($a[$k])) (amd64) · \(up($b[$k])) (arm64)" end ] | map(. + " | ") | add // "")
+                + "\($built) | \($a | length) | "
+                + (if $n == 0 then "✅ identical" else "⚠ \($n) packages differ" end) + " |"' <<<"$sbom" >> "$out"
+            {
+              echo
+              echo "### ${title}"
+              echo
+              echo "| Package | Version |"
+              echo "| --- | --- |"
+              jq -r "$defs"'
+                | ($a + $b | keys[]) as $n
+                | if same($a[$n]; $b[$n]) then "| \($n) | `\($a[$n] // $b[$n])` |"
+                  else "| \($n) | amd64 `\($a[$n] // "—")` · arm64 `\($b[$n] // "—")` ⚠ |" end' <<<"$sbom"
+            } >> "$tables"
+          done <<<"$groups"
+          cat "$tables" >> "$out"
+          echo "overview: $(wc -c < "$out") bytes (Docker Hub limit 25000)"
+          cat "$out"
+      - name: Push overview to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.DOCKERHUB_IMAGE }}
+          readme-filepath: ${{ runner.temp }}/hub-overview.md
+
+  # --------------------------------------------------------------------------
   # Keep the schedule alive. GitHub disables cron workflows in public repos
   # after 60 days without repo activity; re-enabling via the API resets that.
   # --------------------------------------------------------------------------

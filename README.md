@@ -74,6 +74,10 @@ A weekly GitHub Actions workflow (`.github/workflows/build.yml`):
    no QEMU), pushes per-arch tags.
 4. **manifest** — merges the per-arch tags into the codename tag + aliases on both
    registries.
+5. **describe** — regenerate the Docker Hub overview: a short intro linking here,
+   a summary row per published image, and the exact version of every installed
+   package, read from its SBOM attestation (per arch when they differ). Runs on
+   every run.
 
 Manual runs are available via *Run workflow* (`workflow_dispatch`), with an
 optional `suite` input to build any codename/suite (e.g. `sid`).
