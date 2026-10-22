@@ -234,6 +234,8 @@ jobs:
   # amd64 and arm64 differ). Tags are read live from Docker Hub and grouped by
   # digest, so aliases share one section. Runs on every run, so the page always
   # matches what is live — even when nothing was rebuilt.
+  # Image data is read from GHCR (same images; Docker Hub pulls are rate-
+  # limited), the tag list from Docker Hub's web API (not counted as pulls).
   # --------------------------------------------------------------------------
   describe:
     needs: [resolve, manifest]
@@ -241,17 +243,16 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      GHCR_IMAGE: ghcr.io/${{ needs.resolve.outputs.owner }}/debian
       DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_NAMESPACE || secrets.DOCKERHUB_USERNAME }}/debian
       SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
       KEY_PACKAGES: "libc6 openssl apt"   # packages given their own summary column
     steps:
-      - name: Log in to Docker Hub
-        if: env.DOCKERHUB_USERNAME != ''
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
-          username: ${{ env.DOCKERHUB_USERNAME }}
-          password: ${{ env.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Generate overview
         if: env.DOCKERHUB_USERNAME != ''
         run: |
@@ -314,7 +315,7 @@ jobs:
               | sort_by(if (.tags | index("latest")) then 0 else 1 end, .tags[0]) | .[]')
           while read -r g; do
             [ -n "$g" ] || continue
-            ref="${DOCKERHUB_IMAGE}@$(jq -r .digest <<<"$g")"
+            ref="${GHCR_IMAGE}:$(jq -r '.tags[0]' <<<"$g")"
             title=$(jq -r '.tags | map("`:\(.)`") | join(" · ")' <<<"$g")
             sbom=$(inspect "$ref" '{{ json .SBOM }}')
             built=$(inspect "$ref" '{{ json .Image }}' \
