@@ -256,6 +256,19 @@ jobs:
         if: env.DOCKERHUB_USERNAME != ''
         run: |
           set -euo pipefail
+          # imagetools inspect with retries: a registry read right after a push can
+          # fail transiently, and a tag silently missing from the page is worse than
+          # a failed job (the previous overview then stays up).
+          inspect() {  # $1 = image ref, $2 = --format template
+            local i
+            for i in 1 2 3; do
+              docker buildx imagetools inspect "$1" --format "$2" && return 0
+              echo "inspect $1 failed (attempt $i/3)" >&2
+              sleep $((i * 10))
+            done
+            echo "::error::could not inspect $1" >&2
+            return 1
+          }
           out="${RUNNER_TEMP}/hub-overview.md"
           tables="${RUNNER_TEMP}/hub-tables.md"
           {
@@ -303,8 +316,8 @@ jobs:
             [ -n "$g" ] || continue
             ref="${DOCKERHUB_IMAGE}@$(jq -r .digest <<<"$g")"
             title=$(jq -r '.tags | map("`:\(.)`") | join(" · ")' <<<"$g")
-            sbom=$(docker buildx imagetools inspect "$ref" --format '{{ json .SBOM }}')
-            built=$(docker buildx imagetools inspect "$ref" --format '{{ json .Image }}' \
+            sbom=$(inspect "$ref" '{{ json .SBOM }}')
+            built=$(inspect "$ref" '{{ json .Image }}' \
               | jq -r '[.[] | .config.Labels["org.opencontainers.image.created"] // empty] | max // "?" | .[0:10]')
             jq -r --arg title "$title" --arg built "$built" --arg keys "$KEY_PACKAGES" "$defs"'
               | ([ $a + $b | keys[] | select(same($a[.]; $b[.]) | not) ] | length) as $n
